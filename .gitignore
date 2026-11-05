@@ -1,0 +1,6 @@
+.venv
+.env.local
+/data
+/code
+.DS_Store
+requirements.txt
