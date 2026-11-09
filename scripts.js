@@ -53,7 +53,7 @@ function normalizeLocation(value) {
 }
 
 function municipalityFor(incident) {
-    return String(incident.location_normalized || incident.location || "Unknown location").trim();
+    return String(incident.location_normalized || "Unknown location").trim();
 }
 
 function yearFor(incident) {
