@@ -1,5 +1,25 @@
 const map = L.map("map", { zoomControl: false }).setView([37.9838, 23.7275], 11);
 
+let mapResizeFrame = 0;
+function refreshMapSize() {
+    if (mapResizeFrame) {
+        cancelAnimationFrame(mapResizeFrame);
+    }
+
+    mapResizeFrame = requestAnimationFrame(() => {
+        mapResizeFrame = 0;
+        map.invalidateSize({ pan: false, debounceMoveend: true });
+    });
+}
+
+if ("ResizeObserver" in window) {
+    new ResizeObserver(refreshMapSize).observe(document.getElementById("map"));
+}
+window.addEventListener("resize", refreshMapSize);
+window.addEventListener("orientationchange", () => window.setTimeout(refreshMapSize, 150));
+window.visualViewport?.addEventListener("resize", refreshMapSize);
+window.addEventListener("load", refreshMapSize, { once: true });
+
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 19
@@ -256,6 +276,7 @@ async function loadIncidents() {
     updateMap();
 
     if (incidents.length > 0) {
+        map.invalidateSize({ pan: false });
         map.fitBounds(L.latLngBounds(incidents.map(incident => incident.marker.getLatLng())), {
             padding: [42, 42],
             maxZoom: 12
