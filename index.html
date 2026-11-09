@@ -11,77 +11,46 @@
     <script src="scripts.js" defer></script>
 </head>
 <body>
-    <div class="app">
-        <header class="topbar">
-            <div class="brand">
-                <div class="brand-mark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none">
-                        <path d="M19 10.1c0 5.1-7 11-7 11s-7-5.9-7-11a7 7 0 1 1 14 0Z" stroke="currentColor" stroke-width="1.8"/>
-                        <circle cx="12" cy="10" r="2.4" stroke="currentColor" stroke-width="1.8"/>
+    <main class="map-panel" aria-label="Map of incidents">
+        <div id="map"></div>
+        <div class="map-filters" aria-label="Map filters">
+            <div class="municipality-picker">
+                <div class="search-wrap">
+                    <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.8"/>
+                        <path d="m16 16 4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
                     </svg>
+                    <input
+                        class="search-input"
+                        id="municipality-search"
+                        type="search"
+                        placeholder="Search municipality"
+                        autocomplete="off"
+                        role="combobox"
+                        aria-label="Search municipality"
+                        aria-autocomplete="list"
+                        aria-expanded="false"
+                        aria-controls="municipality-options"
+                    >
+                    <button
+                        class="dropdown-toggle"
+                        id="municipalityDropdownToggle"
+                        type="button"
+                        aria-label="Show municipalities"
+                        aria-expanded="false"
+                        aria-controls="municipality-options"
+                    >▼</button>
                 </div>
-                <div>
-                    <p class="eyebrow">Daily overview</p>
-                    <h1>Incident map</h1>
-                </div>
+                <div class="municipality-dropdown" id="municipality-options" role="listbox" hidden></div>
             </div>
-            <div class="topbar-note">Explore incidents by municipality</div>
-        </header>
-
-        <main class="workspace">
-            <aside class="sidebar" aria-label="Incident municipalities">
-
-                <button
-                    id="municipalityToggle"
-                    class="panel-toggle"
-                    type="button"
-                    aria-expanded="true"
-                    aria-controls="municipalityPanel"
-                >
-                    <span>Municipalities</span>
-                    <span id="toggleArrow">▼</span>
-                </button>
-
-                <div id="municipalityPanel">
-
-                    <div class="sidebar-head">
-                    <div class="section-heading">
-                        <div>
-                            <h2>Find an incident</h2>
-                            <p class="section-description">Expand a municipality to see individual locations.</p>
-                        </div>
-                        <span class="count-badge" id="incident-count" aria-label="Geolocated incidents">…</span>
-                    </div>
-                    <label class="search-wrap">
-                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                            <circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.8"/>
-                            <path d="m16 16 4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                        </svg>
-                        <input
-                            class="search-input"
-                            id="incident-search"
-                            type="search"
-                            placeholder="Search municipality or incident"
-                            autocomplete="off"
-                            aria-label="Search municipalities and incidents"
-                        >
-                    </label>
-                </div>
-                <div class="list-meta">
-                    <span>Incident groups</span>
-                    <span id="result-count" aria-live="polite">Loading…</span>
-                </div>
-                <div class="incident-list" id="incident-list" aria-live="polite">
-                    <div class="empty-state">Loading incident locations…</div>
-                </div>
-            </div>
-            </aside>
-
-            <section class="map-panel" aria-label="Map of incidents">
-                <div id="map"></div>
-                <div class="map-status" id="map-status" role="status">Loading locations…</div>
-            </section>
-        </main>
-    </div>
+            <label class="year-filter" for="year-filter">
+                <span class="visually-hidden">Search by year</span>
+                <select id="year-filter" aria-label="Search by year">
+                    <option value="all">All years</option>
+                </select>
+            </label>
+        </div>
+        <div class="map-legend" id="map-legend" aria-label="Incident year colors"></div>
+    </main>
 </body>
 </html>

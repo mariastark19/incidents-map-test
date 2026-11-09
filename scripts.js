@@ -8,16 +8,20 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 L.control.zoom({ position: "bottomright" }).addTo(map);
 L.control.scale({ imperial: false, position: "bottomleft" }).addTo(map);
 
-const incidentList = document.getElementById("incident-list");
-const incidentCount = document.getElementById("incident-count");
-const resultCount = document.getElementById("result-count");
-const searchInput = document.getElementById("incident-search");
-const mapStatus = document.getElementById("map-status");
-const expandedMunicipalities = new Set();
-const workspace = document.querySelector(".workspace");
-const municipalityToggle = document.getElementById("municipalityToggle");
-const municipalityPanel = document.getElementById("municipalityPanel");
-const toggleArrow = document.getElementById("toggleArrow");
+const municipalitySearch = document.getElementById("municipality-search");
+const municipalityDropdown = document.getElementById("municipality-options");
+const municipalityDropdownToggle = document.getElementById("municipalityDropdownToggle");
+const yearFilter = document.getElementById("year-filter");
+const mapLegend = document.getElementById("map-legend");
+const incidentLayer = L.layerGroup().addTo(map);
+
+const yearPalette = ["#ff4fa3", "#37e8ff", "#ffd166", "#a78bfa", "#7ee081", "#ff8a5b", "#5c9dff"];
+const unknownYearColor = "#b8c0d9";
+let incidents = [];
+let municipalities = [];
+let yearColors = new Map();
+let dropdownOpen = false;
+let selectedMunicipality = "";
 
 function normalizeLocation(value) {
     return String(value || "")
@@ -29,61 +33,32 @@ function normalizeLocation(value) {
 }
 
 function municipalityFor(incident) {
-    const location = String(incident.location_normalized || "").trim();
-    if (!location) {
-        return {
-            key: "unknown-location",
-            name: "Unknown location"
-        };
+    return String(incident.location_normalized || incident.location || "Unknown location").trim();
+}
+
+function yearFor(incident) {
+    const value = incident.incident_year;
+    if (value === null || value === undefined || String(value).trim() === "") {
+        return "unknown";
     }
 
-    return {
-        key: location,
-        name: location
-    };
+    const numericYear = Number(value);
+    return Number.isFinite(numericYear) ? String(Math.trunc(numericYear)) : String(value).trim();
 }
 
-function groupIncidents(incidents) {
-    const groups = new Map();
-
-    incidents.forEach(incident => {
-        const municipality = municipalityFor(incident);
-        let group = groups.get(municipality.key);
-        if (!group) {
-            group = {
-                key: municipality.key,
-                name: municipality.name,
-                incidents: [],
-                points: [],
-                latestDate: ""
-            };
-            groups.set(municipality.key, group);
-        }
-
-        group.incidents.push(incident);
-        group.points.push([incident.latitude, incident.longitude]);
-        if ((incident.incident_date || "") > group.latestDate) {
-            group.latestDate = incident.incident_date || "";
-        }
-    });
-
-    return [...groups.values()]
-        .map(group => {
-            group.incidents.sort((a, b) =>
-                (b.incident_date || "").localeCompare(a.incident_date || "")
-            );
-            group.center = L.latLngBounds(group.points).getCenter();
-            group.bounds = L.latLngBounds(group.points);
-            return group;
-        })
-        .sort((a, b) => b.latestDate.localeCompare(a.latestDate) || a.name.localeCompare(b.name));
+function yearLabel(year) {
+    return year === "unknown" ? "Unknown year" : year;
 }
 
-function popupFor(incident, municipalityName) {
+function colorForYear(year) {
+    return year === "unknown" ? unknownYearColor : yearColors.get(year) || yearPalette[0];
+}
+
+function popupFor(incident) {
     const content = document.createElement("div");
     const title = document.createElement("p");
     title.className = "popup-title";
-    title.textContent = municipalityName;
+    title.textContent = municipalityFor(incident);
 
     const item = document.createElement("div");
     item.className = "popup-incident";
@@ -93,12 +68,10 @@ function popupFor(incident, municipalityName) {
     incidentTitle.textContent = `Incident #${incident.incident_id}`;
     item.append(incidentTitle);
 
-    if (incident.incident_date) {
-        const date = document.createElement("p");
-        date.className = "popup-date";
-        date.textContent = incident.incident_date;
-        item.append(date);
-    }
+    const date = document.createElement("p");
+    date.className = "popup-date";
+    date.textContent = incident.incident_date || yearLabel(yearFor(incident));
+    item.append(date);
 
     const summary = document.createElement("p");
     summary.className = "popup-summary";
@@ -113,154 +86,135 @@ function popupFor(incident, municipalityName) {
     }
 
     content.append(title, item);
-
     return content;
 }
 
-function markerFor(group) {
-    group.markers = group.incidents.map(incident => {
-        const icon = L.divIcon({
-            className: "raw-point-marker-wrap",
-            html: '<span class="raw-point-marker"></span>',
-            iconSize: [32, 32],
-            iconAnchor: [16, 16]
-        });
-
-        incident.marker = L.marker([incident.latitude, incident.longitude], { icon })
-            .bindPopup(popupFor(incident, group.name))
-            .addTo(map);
-        return incident.marker;
-    });
+function markerFor(incident) {
+    const marker = L.circleMarker([incident.latitude, incident.longitude], {
+        radius: 8,
+        color: "#ffffff",
+        weight: 2,
+        fillColor: colorForYear(yearFor(incident)),
+        fillOpacity: 0.96
+    }).bindPopup(popupFor(incident));
+    incident.marker = marker;
+    return marker;
 }
 
-function fitMapToMunicipalities(groups) {
-    const expanded = groups.filter(group => expandedMunicipalities.has(group.key));
-    const fittedGroups = expanded.length > 0 ? expanded : groups;
-    const points = fittedGroups.flatMap(group => group.points);
-    if (points.length === 0) {
-        return;
+function selectedIncidents() {
+    const selectedYear = yearFilter.value;
+    return incidents.filter(incident =>
+        (!selectedMunicipality || municipalityFor(incident) === selectedMunicipality) &&
+        (selectedYear === "all" || yearFor(incident) === selectedYear)
+    );
+}
+
+function updateMap(fitBounds = false) {
+    const filteredIncidents = selectedIncidents();
+    incidentLayer.clearLayers();
+    filteredIncidents.forEach(incident => incidentLayer.addLayer(incident.marker));
+
+    if (fitBounds && filteredIncidents.length > 0) {
+        const bounds = L.latLngBounds(filteredIncidents.map(incident => incident.marker.getLatLng()));
+        map.flyToBounds(bounds, { padding: [42, 42], maxZoom: selectedMunicipality ? 15 : 12, duration: 0.6 });
     }
 
-    map.flyToBounds(L.latLngBounds(points), {
-        padding: [42, 42],
-        maxZoom: expanded.length === 1 ? 17 : 12,
-        duration: 0.6
-    });
+    updateMunicipalityOptions();
 }
 
-function incidentItemFor(incident) {
-    const item = document.createElement("button");
-    item.className = "incident-item";
-    item.type = "button";
-    item.setAttribute(
-        "aria-label",
-        `Show incident ${incident.incident_id} at ${incident.location_normalized || "unknown location"}`
+function setDropdownOpen(isOpen) {
+    dropdownOpen = isOpen;
+    municipalityDropdown.hidden = !isOpen;
+    municipalitySearch.setAttribute("aria-expanded", String(isOpen));
+    municipalityDropdownToggle.setAttribute("aria-expanded", String(isOpen));
+}
+
+function chooseMunicipality(name) {
+    selectedMunicipality = name;
+    municipalitySearch.value = name;
+    setDropdownOpen(false);
+    updateMap(true);
+}
+
+function updateMunicipalityOptions() {
+    const query = normalizeLocation(municipalitySearch.value);
+    const selectedYear = yearFilter.value;
+    const availableMunicipalities = municipalities
+        .filter(municipality => normalizeLocation(municipality.name).includes(query))
+        .map(municipality => ({
+            ...municipality,
+            count: municipality.incidents.filter(incident =>
+                selectedYear === "all" || yearFor(incident) === selectedYear
+            ).length
+        }));
+
+    municipalityDropdown.replaceChildren();
+    if (!query) {
+        const allOption = document.createElement("button");
+        allOption.className = "municipality-option";
+        allOption.type = "button";
+        allOption.setAttribute("role", "option");
+        allOption.setAttribute("aria-selected", String(!selectedMunicipality));
+        allOption.textContent = "All municipalities";
+        allOption.addEventListener("click", () => chooseMunicipality(""));
+        municipalityDropdown.append(allOption);
+    }
+
+    if (availableMunicipalities.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "municipality-option-empty";
+        empty.textContent = "No municipalities found.";
+        municipalityDropdown.append(empty);
+    } else {
+        availableMunicipalities.forEach(municipality => {
+            const option = document.createElement("button");
+            option.className = "municipality-option";
+            option.type = "button";
+            option.setAttribute("role", "option");
+            option.setAttribute("aria-selected", String(municipality.name === selectedMunicipality));
+
+            const name = document.createElement("span");
+            name.textContent = municipality.name;
+            const count = document.createElement("span");
+            count.className = "municipality-option-count";
+            count.textContent = String(municipality.count);
+            option.append(name, count);
+            option.addEventListener("click", () => chooseMunicipality(municipality.name));
+            municipalityDropdown.append(option);
+        });
+    }
+}
+
+function initializeYearControls() {
+    const years = [...new Set(incidents.map(yearFor))]
+        .sort((a, b) => a === "unknown" ? 1 : b === "unknown" ? -1 : Number(a) - Number(b));
+    yearColors = new Map(
+        years.filter(year => year !== "unknown").map((year, index) => [
+            year,
+            yearPalette[index % yearPalette.length]
+        ])
     );
 
-    const date = document.createElement("span");
-    date.className = "incident-item-date";
-    date.textContent = incident.incident_date || "Unknown date";
-
-    const summary = document.createElement("span");
-    summary.className = "incident-item-summary";
-    summary.textContent = incident.incident_summary || "No description";
-    item.append(date, summary);
-
-    if (incident.address) {
-        const address = document.createElement("span");
-        address.className = "incident-item-address";
-        address.textContent = incident.address;
-        item.append(address);
-    }
-
-    item.addEventListener("click", () => {
-        map.flyTo(incident.marker.getLatLng(), 17, { duration: 0.6 });
-        incident.marker.openPopup();
-    });
-    return item;
-}
-
-function cardFor(group, groups) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "municipality-group";
-
-    const header = document.createElement("button");
-    header.className = "municipality-header";
-    header.type = "button";
-    const isExpanded = expandedMunicipalities.has(group.key);
-    header.setAttribute("aria-expanded", String(isExpanded));
-
-    const content = document.createElement("div");
-    content.className = "municipality-content";
-    content.id = `municipality-${groups.indexOf(group)}`;
-    content.hidden = !isExpanded;
-    header.setAttribute("aria-controls", content.id);
-
-    const name = document.createElement("span");
-    name.className = "municipality-name";
-    name.textContent = group.name;
-
-    const count = document.createElement("span");
-    count.className = "municipality-count";
-    count.textContent = `${group.incidents.length} incident${group.incidents.length === 1 ? "" : "s"}`;
-
-    const chevron = document.createElement("span");
-    chevron.className = "municipality-chevron";
-    chevron.setAttribute("aria-hidden", "true");
-    chevron.textContent = "⌄";
-    header.append(name, count, chevron);
-
-    group.incidents.forEach(incident => content.append(incidentItemFor(incident)));
-
-    header.addEventListener("click", () => {
-        const willExpand = !expandedMunicipalities.has(group.key);
-        if (willExpand) {
-            expandedMunicipalities.add(group.key);
-        } else {
-            expandedMunicipalities.delete(group.key);
-        }
-
-        header.setAttribute("aria-expanded", String(willExpand));
-        content.hidden = !willExpand;
-        fitMapToMunicipalities(groups);
+    years.forEach(year => {
+        const option = document.createElement("option");
+        option.value = year;
+        option.textContent = yearLabel(year);
+        yearFilter.append(option);
     });
 
-    wrapper.append(header, content);
-
-    return wrapper;
-}
-
-function updateList(groups) {
-    const query = normalizeLocation(searchInput.value);
-    const visible = groups.filter(group => {
-        const searchable = [
-            group.name,
-            group.key,
-            ...group.incidents.flatMap(incident => [
-                incident.location_normalized,
-                incident.address,
-                incident.incident_summary,
-                incident.incident_date
-            ])
-        ].filter(Boolean).map(normalizeLocation).join(" ");
-        return searchable.includes(query);
+    mapLegend.replaceChildren();
+    years.forEach(year => {
+        const entry = document.createElement("span");
+        entry.className = "legend-entry";
+        const swatch = document.createElement("span");
+        swatch.className = "legend-swatch";
+        swatch.style.backgroundColor = colorForYear(year);
+        swatch.setAttribute("aria-hidden", "true");
+        const label = document.createElement("span");
+        label.textContent = yearLabel(year);
+        entry.append(swatch, label);
+        mapLegend.append(entry);
     });
-
-    incidentList.replaceChildren();
-    if (visible.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "empty-state";
-        empty.textContent = query
-            ? "No municipality groups match your search."
-            : "No geolocated incidents to show.";
-        incidentList.append(empty);
-    } else {
-        visible.forEach(group => incidentList.append(cardFor(group, visible)));
-    }
-
-    resultCount.textContent = query
-        ? `${visible.length} of ${groups.length}`
-        : `${groups.length} shown`;
 }
 
 async function loadIncidents() {
@@ -274,55 +228,81 @@ async function loadIncidents() {
         throw new Error("incidents.json must contain a list of incidents");
     }
 
-    const incidents = data.filter(incident =>
+    incidents = data.filter(incident =>
         incident &&
         typeof incident.latitude === "number" &&
         Number.isFinite(incident.latitude) &&
         typeof incident.longitude === "number" &&
         Number.isFinite(incident.longitude)
     );
-    const groups = groupIncidents(incidents);
+    initializeYearControls();
 
-    groups.forEach(markerFor);
-    incidentCount.textContent = String(incidents.length);
-    incidentCount.setAttribute("aria-label", `${incidents.length} geolocated incidents`);
-    const municipalityCount = groups.filter(group => group.key !== "unknown-location").length;
-    mapStatus.textContent = `${municipalityCount} municipalities · ${incidents.length} incidents`;
-    updateList(groups);
+    const municipalityGroups = new Map();
+    incidents.forEach(incident => {
+        const name = municipalityFor(incident);
+        if (!municipalityGroups.has(name)) {
+            municipalityGroups.set(name, []);
+        }
+        municipalityGroups.get(name).push(incident);
+    });
+    municipalities = [...municipalityGroups.entries()]
+        .map(([name, municipalityIncidents]) => ({ name, incidents: municipalityIncidents }))
+        .sort((a, b) => a.name.localeCompare(b.name));
 
-    if (groups.length > 0) {
-        map.fitBounds(L.latLngBounds(groups.flatMap(group => group.points)), {
+    incidents.forEach(incident => {
+        incident.marker = markerFor(incident);
+    });
+    updateMunicipalityOptions();
+    updateMap();
+
+    if (incidents.length > 0) {
+        map.fitBounds(L.latLngBounds(incidents.map(incident => incident.marker.getLatLng())), {
             padding: [42, 42],
             maxZoom: 12
         });
-    } else {
-        mapStatus.textContent = "No geolocated incidents";
     }
 
-    searchInput.addEventListener("input", () => updateList(groups));
+    municipalitySearch.addEventListener("focus", () => {
+        if (selectedMunicipality) {
+            municipalitySearch.select();
+        }
+        updateMunicipalityOptions();
+        setDropdownOpen(true);
+    });
+    municipalitySearch.addEventListener("input", () => {
+        selectedMunicipality = "";
+        updateMunicipalityOptions();
+        setDropdownOpen(true);
+        updateMap(true);
+    });
+    municipalitySearch.addEventListener("keydown", event => {
+        if (event.key === "Escape") {
+            setDropdownOpen(false);
+            municipalitySearch.blur();
+        }
+    });
+    municipalityDropdownToggle.addEventListener("click", () => {
+        if (dropdownOpen) {
+            setDropdownOpen(false);
+        } else {
+            if (selectedMunicipality) {
+                selectedMunicipality = "";
+                municipalitySearch.value = "";
+                updateMap();
+            }
+            municipalitySearch.focus();
+            updateMunicipalityOptions();
+            setDropdownOpen(true);
+        }
+    });
+    document.addEventListener("click", event => {
+        if (!event.target.closest(".municipality-picker")) {
+            setDropdownOpen(false);
+        }
+    });
+    yearFilter.addEventListener("change", () => updateMap(true));
 }
 
 loadIncidents().catch(error => {
     console.error(error);
-    incidentCount.textContent = "!";
-    incidentCount.setAttribute("aria-label", "Incident locations could not be loaded");
-    resultCount.textContent = "Unavailable";
-    mapStatus.textContent = "Unable to load locations";
-    incidentList.replaceChildren();
-    const errorMessage = document.createElement("div");
-    errorMessage.className = "empty-state";
-    errorMessage.textContent = "Incident locations could not be loaded. Check that incidents.json is available.";
-    incidentList.append(errorMessage);
-});
-
-municipalityToggle.addEventListener("click", () => {
-    const isExpanded = municipalityToggle.getAttribute("aria-expanded") === "true";
-    municipalityToggle.setAttribute("aria-expanded", String(!isExpanded));
-    municipalityPanel.hidden = isExpanded;
-    toggleArrow.textContent = isExpanded ? "▶" : "▼";
-    workspace.classList.toggle("sidebar-collapsed", isExpanded);
-
-    window.setTimeout(() => {
-        map.invalidateSize({ pan: false });
-    }, 260);
 });
